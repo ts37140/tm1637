@@ -24,12 +24,35 @@
 MODULE_LICENSE("GPL");
 MODULE_AUTHOR("TERO SALMINEN");
 
+#define TM1637_BITBANG_DELAY()		usleep_range(100, 300)
+
+/* tm1637 can drive 6 pcs 7-segment leds */
+#define TM1637_GRID_NUM			6U
+
 #define TM1637_DISP_CTRL_OFF		0x81	/* B1000_0000*/
 #define TM1637_DISP_CTRL_ON_MIN		0x88	/* B1000_1000*/
-#define TM1637_DISP_CTRL_ON_MED		0x8C	/* B1000_1111*/
-#define TM1637_DISP_CTRL_ON_MAX		0x8F	/* B1000_1100*/
+#define TM1637_DISP_CTRL_ON_MED		0x8C	/* B1000_1100*/
+#define TM1637_DISP_CTRL_ON_MAX		0x8F	/* B1000_1111*/
 
-#define TM1637_BITBANG_DELAY()		usleep_range(100, 300)
+#define TM1637_WRITE_DATA_AUTO_ADDR	0x40	/* B0100_0000 */
+#define TM1637_ADDR_DISP_C0H		0xC0	/* B1100_0000*/
+
+#define TM1637_7_SEGMENT_EMPTY		0x0
+#define TM1637_7_SEGMENT_ALL_ON		0xFF
+#define TM1637_7_SEGMENT_MINUS		0x40
+
+static const uint8_t SEGMENT_CHAR[] = {
+	0x3f,	/* 0 */
+	0x6,	/* 1 */
+	0x5b,	/* 2 */
+	0x4f,	/* 3 */
+	0x66,	/* 4 */
+	0x6d,	/* 5 */
+	0x7d,	/* 6 */
+	0x7,	/* 7 */
+	0x7f,	/* 8 */
+	0x67,	/* 9 */
+};
 
 #define TM1637_SELFTEST_ON_TIME		1000UL	/* 1 sec */
 
@@ -48,6 +71,7 @@ struct tm1637_gpios {
 struct drv_priv {
 	enum tm1637_status chip_status;
 	struct tm1637_gpios gpio;
+	uint8_t segment[TM1637_GRID_NUM];
 };
 
 /*
@@ -185,6 +209,38 @@ static int tm1637_set_disp_ctrl(struct device *dev, uint8_t cmd)
 }
 
 /*
+ * Write seven segment led configuration to chip.
+ */
+static int tm1637_write_seven_seg_config(struct device *dev)
+{
+	int res = 0;
+	struct drv_priv *priv = dev_get_drvdata(dev);
+
+	tm1637_data_input_enter(dev);
+
+	res = tm1637_write_8_bits(dev, TM1637_WRITE_DATA_AUTO_ADDR);
+	if (res)
+		return res;
+
+	tm1637_data_input_exit(dev);
+
+	tm1637_data_input_enter(dev);
+
+	res = tm1637_write_8_bits(dev, TM1637_ADDR_DISP_C0H);
+
+	res = tm1637_write_8_bits(dev, priv->segment[0]);
+	res = tm1637_write_8_bits(dev, priv->segment[1]);
+	res = tm1637_write_8_bits(dev, priv->segment[2]);
+	res = tm1637_write_8_bits(dev, priv->segment[3]);
+	res = tm1637_write_8_bits(dev, priv->segment[4]);
+	res = tm1637_write_8_bits(dev, priv->segment[5]);
+
+	tm1637_data_input_exit(dev);
+
+	return res;
+}
+
+/*
  * Chip power is toggled off/on and data input mode exit sequence
  * is executed. Chip is ready to start data input mode after reset.
  *
@@ -213,7 +269,7 @@ static void tm1637_reset(struct device *dev)
 
 /*
  * Selftest verifies communication is working with the chip
- * by switching led display control on and off.
+ * by setting all leds active and switching display on and off.
  */
 static void tm1637_selftest(struct device *dev)
 {
@@ -223,6 +279,14 @@ static void tm1637_selftest(struct device *dev)
 	priv->chip_status = TM1637_STATUS_SELFTEST_FAIL;
 
 	tm1637_reset(dev);
+
+	memset(priv->segment, TM1637_7_SEGMENT_ALL_ON, TM1637_GRID_NUM);
+	
+	res = tm1637_write_seven_seg_config(dev);
+	if (res) {
+		dev_err(dev, "Selftest: segment write failed %d", res);
+		return;
+	}
 
 	res = tm1637_set_disp_ctrl(dev, TM1637_DISP_CTRL_ON_MED);
 	if (res) {
