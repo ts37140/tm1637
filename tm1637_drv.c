@@ -61,6 +61,8 @@ enum tm1637_status {
 	TM1637_STATUS_LOADED		= 0,
 	TM1637_STATUS_SELFTEST_OK,
 	TM1637_STATUS_SELFTEST_FAIL,
+	TM1637_STATUS_OK,
+	TM1637_STATUS_ERROR,
 };
 
 struct tm1637_gpios {
@@ -74,6 +76,51 @@ struct drv_priv {
 	struct tm1637_gpios gpio;
 	uint8_t segment[TM1637_GRID_NUM];
 };
+
+#define TM1637_ASCII_OFFSET		48 /* 0 */
+#define TM1637_ASCII_LAST_DIGIT		57 /* 9 */
+#define TM1637_ASCII_MINUS		0x2D /* - */
+#define TM1637_ASCII_DOT		0x2E /* . */
+
+/*
+ * Convert string to seven segment characters. Supported characters are decimal
+ * numbers and '-'.
+ * 
+ * '.'-character marks segment off.
+ * 
+ * Conversion stops after 6 characters (TM1637_GRID_NUM) and rest characters
+ * are discarded.
+ * 
+ * Conversion stops for invalid character without raising error.
+ */
+static void tm1637_str_to_digits(struct device *dev, const char* value,
+						uint8_t *digits)
+{
+	int i = 0;
+	uint32_t len = min(strlen(value), TM1637_GRID_NUM);
+
+	memset(digits, TM1637_7_SEGMENT_EMPTY, TM1637_GRID_NUM);
+
+	for (i = 0; i < len; i++) {
+		if (value[i] == TM1637_ASCII_MINUS) {
+			digits[i] = TM1637_7_SEGMENT_MINUS;
+			continue;
+		}
+
+		if (value[i] == TM1637_ASCII_DOT) {
+			digits[i] = TM1637_7_SEGMENT_EMPTY;
+			continue;
+		}
+
+		if (value[i] < TM1637_ASCII_OFFSET ||
+		    value[i] > TM1637_ASCII_LAST_DIGIT)
+			break;
+
+		digits[i] = SEGMENT_CHAR[value[i] - TM1637_ASCII_OFFSET];
+	}
+
+	return;
+}
 
 /*
  * In data input mode chip reads data from DIO pin on raising edge of
@@ -308,12 +355,32 @@ static void tm1637_selftest(struct device *dev)
 	dev_info(dev, "Selftest: OK\n");
 }
 
+/*
+ * Set digits shown in the display.
+ */
 static ssize_t set_digits_store(struct device *dev,
 				struct device_attribute *attr,
 				const char *buf,
 				size_t count)
 {
-	return -EPERM;
+	int res =  0;
+	struct drv_priv *priv = dev_get_drvdata(dev);
+
+	priv->chip_status = TM1637_STATUS_ERROR;
+
+	tm1637_str_to_digits(dev, buf, priv->segment);
+
+	res = tm1637_write_seven_seg_config(dev);
+	if (res)
+		return res;
+
+	res = tm1637_set_disp_ctrl(dev, TM1637_DISP_CTRL_ON_MED);
+	if (res)
+		return res;
+
+	priv->chip_status = TM1637_STATUS_OK;
+
+	return count;
 }
 
 static ssize_t get_status_show(struct device *dev,
@@ -334,6 +401,14 @@ static ssize_t get_status_show(struct device *dev,
 
 	case TM1637_STATUS_SELFTEST_FAIL:
 		res = sprintf(buf, "Status: selftest FAILED\n");
+		break;
+
+	case TM1637_STATUS_OK:
+		res = sprintf(buf, "Status: OK\n");
+		break;
+	
+	case TM1637_STATUS_ERROR:
+		res = sprintf(buf, "Status: ERROR\n");
 		break;
 
 	default:
