@@ -41,6 +41,7 @@ MODULE_AUTHOR("TERO SALMINEN");
 #define TM1637_7_SEGMENT_ALL_ON		0xFF
 #define TM1637_7_SEGMENT_MINUS		0x40
 
+/* Characters for seven segment digits */
 static const uint8_t SEGMENT_CHAR[] = {
 	0x3f,	/* 0 */
 	0x6,	/* 1 */
@@ -51,7 +52,7 @@ static const uint8_t SEGMENT_CHAR[] = {
 	0x7d,	/* 6 */
 	0x7,	/* 7 */
 	0x7f,	/* 8 */
-	0x67,	/* 9 */
+	0x6F,	/* 9 */
 };
 
 #define TM1637_SELFTEST_ON_TIME		1000UL	/* 1 sec */
